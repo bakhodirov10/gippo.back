@@ -56,18 +56,8 @@ async function bootstrap() {
   };
 
   app.enableCors({
-    origin: (requestOrigin, callback) => {
-      const allowed = isAllowedOrigin(requestOrigin);
-      const originDisplay = requestOrigin || 'No Origin';
-      logger.log(`[CORS] Origin: ${originDisplay} -> ${allowed ? 'ALLOWED' : 'BLOCKED'}`);
-
-      if (allowed) {
-        callback(null, requestOrigin || true);
-      } else {
-        callback(null, false);
-      }
-    },
-    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+    origin: true,
+    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
     allowedHeaders: [
       'Content-Type',
       'Accept',
