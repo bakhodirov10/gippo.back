@@ -37,15 +37,20 @@ async function bootstrap() {
   const isAllowedOrigin = (origin?: string): boolean => {
     if (!origin) return true; // Allow non-browser calls (Postman, curl, server-to-server)
     if (allowedOrigins.includes(origin)) return true;
-    if (process.env.NODE_ENV !== 'production') {
-      // Allow local network IP addresses (10.x.x.x, 192.168.x.x, 172.16-31.x.x, localhost, 127.0.0.1) in development
-      if (
-        /^http:\/\/(localhost|127\.0\.0\.1|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})(:\d+)?$/.test(
-          origin,
-        )
-      ) {
-        return true;
-      }
+    // Allow all Vercel deployments (*.vercel.app) and Gippo / Render domains
+    if (/\.vercel\.app$/.test(origin) || origin.endsWith('.vercel.app') || origin.includes('gippo')) {
+      return true;
+    }
+    if (process.env.CORS_ORIGIN === '*' || !process.env.CORS_ORIGIN) {
+      return true;
+    }
+    // Allow local network IP addresses (10.x.x.x, 192.168.x.x, 172.16-31.x.x, localhost, 127.0.0.1) in development
+    if (
+      /^https?:\/\/(localhost|127\.0\.0\.1|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})(:\d+)?$/.test(
+        origin,
+      )
+    ) {
+      return true;
     }
     return false;
   };
