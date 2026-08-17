@@ -7,7 +7,7 @@ async function testDirectProvider() {
   console.log('--- DIRECT AI PROVIDER TEST ---');
   
   const provider = (process.env.AI_PROVIDER || 'GROQ').toUpperCase();
-  const modelName = process.env.AI_MODEL || (provider === 'GROQ' ? 'llama-3.3-70b-versatile' : 'gemini-1.5-flash');
+  const modelName = process.env.AI_MODEL || (provider === 'GROQ' ? 'llama-3.3-70b-versatile' : 'gemini-3.6-flash');
   
   let apiKey = '';
   if (provider === 'GROQ') {

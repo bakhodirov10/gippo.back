@@ -225,7 +225,7 @@ STRICT CLINICAL & SAFETY GUIDELINES:
       'GROQ'
     ).toUpperCase();
 
-    const defaultModel = provider === 'GROQ' ? 'llama-3.3-70b-versatile' : 'gemini-1.5-flash';
+    const defaultModel = provider === 'GROQ' ? 'llama-3.3-70b-versatile' : 'gemini-3.6-flash';
     const modelName =
       this.configService.get<string>('AI_MODEL') ||
       process.env.AI_MODEL ||
@@ -436,7 +436,7 @@ STRICT CLINICAL & SAFETY GUIDELINES:
       modelName =
         this.configService.get<string>('AI_MODEL') ||
         process.env.AI_MODEL ||
-        'gemini-1.5-flash';
+        'gemini-3.6-flash';
     }
 
     const isDummyOrMissingKey =
