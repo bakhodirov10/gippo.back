@@ -11,7 +11,7 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../database/prisma.service';
 import { ChatMessageDto } from './dto/chat-message.dto';
 import { AISender } from '@prisma/client';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from '@google/generative-ai';
 import Groq from 'groq-sdk';
 
 export enum AiErrorCode {
@@ -180,14 +180,10 @@ export class AiService implements OnModuleInit {
   private readonly logger = new Logger(AiService.name);
 
   public static readonly SYSTEM_INSTRUCTION = `
-You are the Gippo.uz AI Health Assistant. 
-STRICT CLINICAL & SAFETY GUIDELINES:
-1. You are an AI medical assistant, NOT a licensed medical doctor. Never claim to be a doctor.
-2. Do NOT provide definitive medical diagnoses or prescribe dangerous drugs/treatments.
-3. Encourage users to consult qualified doctors on Gippo.uz when appropriate.
-4. Detect potential emergency situations (chest pain, shortness of breath, severe bleeding, sudden loss of consciousness, stroke symptoms). If detected, IMMEDIATELY instruct the user to call emergency medical services (103) or go to the nearest emergency room.
-5. Clearly explain uncertainty and protect user privacy.
-6. Always respond in the same language as the user's latest message. Do not switch languages unless the user explicitly asks you to. If the user writes in Uzbek, answer in Uzbek. If the user writes in Russian, answer in Russian. If the user writes in English, answer in English.
+You are Gippo AI — an advanced, highly capable, versatile, and unlimited AI assistant.
+DIRECTIVES:
+1. Answer any user question, request, or topic directly, thoroughly, accurately, and without artificial restrictions on topic or domain (e.g. health, technology, programming, science, general knowledge, creative writing, daily advice, business, etc.).
+2. Always respond in the same language as the user's latest message (Uzbek if Uzbek, Russian if Russian, English if English).
 `;
 
   public static readonly DISCLAIMERS: Record<SupportedLanguage, string> = {
@@ -339,7 +335,19 @@ STRICT CLINICAL & SAFETY GUIDELINES:
 
     let aiRawResponse = '';
 
-    if (isEmergency) {
+    const provider = (
+      this.configService.get<string>('AI_PROVIDER') ||
+      process.env.AI_PROVIDER ||
+      'GROQ'
+    ).toUpperCase();
+
+    const currentKey = provider === 'GROQ'
+      ? (this.configService.get<string>('GROQ_API_KEY') || process.env.GROQ_API_KEY || this.configService.get<string>('AI_API_KEY') || process.env.AI_API_KEY)
+      : (this.configService.get<string>('GEMINI_API_KEY') || process.env.GEMINI_API_KEY || this.configService.get<string>('AI_API_KEY') || process.env.AI_API_KEY);
+
+    const hasActiveKey = currentKey && currentKey.trim() && !currentKey.includes('mock_gemini_api_key') && currentKey !== 'My-GROQ-key' && currentKey !== 'My-API-key';
+
+    if (isEmergency && !hasActiveKey) {
       aiRawResponse = AiService.EMERGENCY_MESSAGES[targetLanguage];
     } else {
       aiRawResponse = await this.generateAiResponseWithProvider(
@@ -503,18 +511,41 @@ STRICT CLINICAL & SAFETY GUIDELINES:
         throw new Error('Empty response content received from Groq provider');
       } else if (provider === 'GEMINI') {
         const genAI = new GoogleGenerativeAI(apiKey!);
+        const safetySettings = [
+          { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+          { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+          { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+          { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+        ];
+
         const model = genAI.getGenerativeModel({
           model: modelName,
           systemInstruction: systemPromptWithLang,
+          safetySettings,
         });
 
-        const fetchPromise = model.generateContent(userPrompt);
-        const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('AI Request Timeout Exceeded')), timeoutMs),
-        );
-
-        const result = (await Promise.race([fetchPromise, timeoutPromise])) as any;
-        const responseText = result.response?.text();
+        let responseText = '';
+        const recentHistory = historyMessages.slice(-6);
+        if (recentHistory.length > 0) {
+          const history = recentHistory.map((msg) => ({
+            role: msg.sender === AISender.USER ? 'user' : 'model',
+            parts: [{ text: msg.content }],
+          }));
+          const chat = model.startChat({ history });
+          const fetchPromise = chat.sendMessage(userPrompt);
+          const timeoutPromise = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('AI Request Timeout Exceeded')), timeoutMs),
+          );
+          const result = (await Promise.race([fetchPromise, timeoutPromise])) as any;
+          responseText = result.response?.text();
+        } else {
+          const fetchPromise = model.generateContent(userPrompt);
+          const timeoutPromise = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('AI Request Timeout Exceeded')), timeoutMs),
+          );
+          const result = (await Promise.race([fetchPromise, timeoutPromise])) as any;
+          responseText = result.response?.text();
+        }
 
         if (responseText && responseText.trim()) {
           return responseText.trim();
