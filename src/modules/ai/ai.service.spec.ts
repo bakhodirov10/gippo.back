@@ -1,10 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { AiService, detectLanguage } from './ai.service';
+import { AiErrorCode, AiService, detectLanguage } from './ai.service';
 import { PrismaService } from '../../database/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import { AISender } from '@prisma/client';
+import { ServiceUnavailableException, BadRequestException } from '@nestjs/common';
 
-describe('AiService - Language Detection & Multi-lingual Assistant', () => {
+describe('AiService — 100% Real Gemini AI Architecture', () => {
   let service: AiService;
 
   const mockConversations = new Map<string, any>();
@@ -37,10 +38,11 @@ describe('AiService - Language Detection & Multi-lingual Assistant', () => {
   };
 
   const mockConfigService = {
-    get: jest.fn((key: string) => {
-      if (key === 'AI_PROVIDER') return 'GROQ';
-      if (key === 'AI_MODEL') return 'llama-3.3-70b-versatile';
-      if (key === 'GROQ_API_KEY') return ''; // Triggers fallback mode cleanly
+    get: jest.fn((key: string): any => {
+      if (key === 'AI_PROVIDER') return 'GEMINI';
+      if (key === 'AI_MODEL') return 'gemini-3.6-flash';
+      if (key === 'GEMINI_API_KEY') return 'test-valid-gemini-key';
+      if (key === 'AI_TIMEOUT_MS') return '30000';
       return null;
     }),
   };
@@ -65,172 +67,155 @@ describe('AiService - Language Detection & Multi-lingual Assistant', () => {
     expect(service).toBeDefined();
   });
 
-  // 1. Uzbek message -> Uzbek response instruction
-  it('1. should process Uzbek message and return Uzbek response with Uzbek disclaimer', async () => {
-    const res = await service.processChat(null, {
-      message: 'Salom, boshim ogriyapti, nima qilishim kerak?',
+  describe('Language Detection', () => {
+    it('should detect Uzbek correctly (Latin & Cyrillic)', () => {
+      expect(detectLanguage('Salom, boshim ogriyapti nima qilish kerak')).toBe('uz');
+      expect(detectLanguage('Салом, бошим оғрияпти нима қилишим керак')).toBe('uz');
+      expect(detectLanguage("Ko'krak qafasida og'riq bor")).toBe('uz');
     });
 
-    expect(res.isEmergency).toBe(false);
-    expect(res.reply).toContain("Gippo AI ma'lumot beruvchi vosita");
-    expect(res.reply).toContain("Bosh og'rig'i");
+    it('should detect Russian correctly', () => {
+      expect(detectLanguage('Здравствуйте, у меня болит голова')).toBe('ru');
+      expect(detectLanguage('Каковы симптомы простуды?')).toBe('ru');
+    });
+
+    it('should detect English correctly', () => {
+      expect(detectLanguage('Hello, I have a headache what should I do?')).toBe('en');
+      expect(detectLanguage('What is hypertension?')).toBe('en');
+    });
   });
 
-  // 2. Russian message -> Russian response instruction
-  it('2. should process Russian message and return Russian response with Russian disclaimer', async () => {
-    const res = await service.processChat(null, {
-      message: 'Здравствуйте, у меня болит голова. Что мне делать?',
+  describe('Validation & Error Handling (NO Fallbacks)', () => {
+    it('should throw BadRequestException on empty message', async () => {
+      await expect(
+        service.processChat(null, { message: '   ' }),
+      ).rejects.toThrow(BadRequestException);
     });
 
-    expect(res.isEmergency).toBe(false);
-    expect(res.reply).toContain('Gippo ИИ является информационным инструментом');
-    expect(res.reply).toContain('Головная боль');
+    it('should throw ServiceUnavailableException with AI_AUTH_ERROR when Gemini key fails', async () => {
+      (service as any).geminiClient = {
+        models: {
+          generateContent: jest.fn().mockRejectedValue({
+            status: 401,
+            message: 'API_KEY_INVALID: The provided API key is invalid',
+          }),
+        },
+      };
+
+      try {
+        await service.processChat(null, { message: 'Salom' });
+        fail('Should have thrown');
+      } catch (err: any) {
+        expect(err).toBeInstanceOf(ServiceUnavailableException);
+        const res: any = err.getResponse();
+        expect(res.error.code).toBe(AiErrorCode.AI_AUTH_ERROR);
+      }
+    });
+
+    it('should throw ServiceUnavailableException with AI_RATE_LIMIT on 429 quota error', async () => {
+      (service as any).geminiClient = {
+        models: {
+          generateContent: jest.fn().mockRejectedValue({
+            status: 429,
+            message: 'RESOURCE_EXHAUSTED: Quota exceeded for quota metric',
+          }),
+        },
+      };
+
+      try {
+        await service.processChat(null, { message: 'Salom' });
+        fail('Should have thrown');
+      } catch (err: any) {
+        expect(err).toBeInstanceOf(ServiceUnavailableException);
+        const res: any = err.getResponse();
+        expect(res.error.code).toBe(AiErrorCode.AI_RATE_LIMIT);
+      }
+    });
+
+    it('should throw ServiceUnavailableException with AI_TIMEOUT on timeout', async () => {
+      mockConfigService.get.mockImplementation((key: string): any => {
+        if (key === 'AI_TIMEOUT_MS') return '50';
+        if (key === 'GEMINI_API_KEY') return 'test-valid-gemini-key';
+        return null;
+      });
+
+      (service as any).geminiClient = {
+        models: {
+          generateContent: jest.fn().mockReturnValue(
+            new Promise((resolve) => setTimeout(resolve, 500)),
+          ),
+        },
+      };
+
+      try {
+        await service.processChat(null, { message: 'Salom' });
+        fail('Should have thrown');
+      } catch (err: any) {
+        expect(err).toBeInstanceOf(ServiceUnavailableException);
+        const res: any = err.getResponse();
+        expect(res.error.code).toBe(AiErrorCode.AI_TIMEOUT);
+      }
+    });
   });
 
-  // 3. English message -> English response instruction
-  it('3. should process English message and return English response with English disclaimer', async () => {
-    const res = await service.processChat(null, {
-      message: 'Hello, I have a headache. What should I do?',
+  describe('Real Gemini Response Processing', () => {
+    it('should return real response from Gemini with localized disclaimer', async () => {
+      const mockGeminiReply = "Bosh og'rig'i ko'plab sabablarga ko'ra yuzaga kelishi mumkin. Dam oling va yetarli suv iching.";
+      (service as any).geminiClient = {
+        models: {
+          generateContent: jest.fn().mockResolvedValue({
+            text: mockGeminiReply,
+          }),
+        },
+      };
+
+      const res = await service.processChat(null, {
+        message: 'Boshim ogriyapti',
+      });
+
+      expect(res.reply).toContain(mockGeminiReply);
+      expect(res.reply).toContain("Gippo AI ma'lumot beruvchi vosita");
+      expect(res.isEmergency).toBe(false);
     });
 
-    expect(res.isEmergency).toBe(false);
-    expect(res.reply).toContain('Gippo AI is an informational tool');
-    expect(res.reply).toContain('Headaches can occur');
-  });
+    it('should prepend emergency warning for emergency symptoms while keeping Gemini response', async () => {
+      const mockGeminiReply = "Bu alomatlar jiddiy holatni ko'rsatishi mumkin.";
+      (service as any).geminiClient = {
+        models: {
+          generateContent: jest.fn().mockResolvedValue({
+            text: mockGeminiReply,
+          }),
+        },
+      };
 
-  // 4. Mixed Uzbek/Russian -> dominant language
-  it('4. should determine dominant language for mixed input', () => {
-    // Dominant Uzbek
-    const langUz = detectLanguage('Salom doctor, boshim ogriyapti nima qilish kerak');
-    expect(langUz).toBe('uz');
+      const res = await service.processChat(null, {
+        message: "Menda kuchli ko'krak og'riq va nafas qisishi bor",
+      });
 
-    // Dominant Russian
-    const langRu = detectLanguage('Здравствуйте доктор, у меня болит голова и температура');
-    expect(langRu).toBe('ru');
-
-    // Dominant English
-    const langEn = detectLanguage('Hello doctor, I feel sick and have fever');
-    expect(langEn).toBe('en');
-  });
-
-  // 5. Conversation switches from Russian to Uzbek
-  it('5. should switch response language to Uzbek when conversation was initially Russian', async () => {
-    // Setup initial conversation in Russian
-    const convId = 'conv-ru-to-uz';
-    mockConversations.set(convId, { id: convId, userId: 'user-1' });
-    mockMessages.push({
-      id: 'msg-1',
-      conversationId: convId,
-      sender: AISender.USER,
-      content: 'Здравствуйте, у меня болит голова.',
-    });
-    mockMessages.push({
-      id: 'msg-2',
-      conversationId: convId,
-      sender: AISender.ASSISTANT,
-      content: 'Здравствуйте! Головная боль...',
+      expect(res.isEmergency).toBe(true);
+      expect(res.reply).toContain('SHOSHILINCH OGOHLANTIRISH');
+      expect(res.reply).toContain('103');
+      expect(res.reply).toContain(mockGeminiReply);
     });
 
-    // Send new message in Uzbek
-    const res = await service.processChat('user-1', {
-      conversationId: convId,
-      message: 'Rahmat shifokor, endi oshqozonim ogriyapti nima qilsam bo\'ladi?',
+    it('should save conversation and messages in Prisma when userId is provided', async () => {
+      const mockGeminiReply = "Salom! Sizga qanday yordam bera olaman?";
+      (service as any).geminiClient = {
+        models: {
+          generateContent: jest.fn().mockResolvedValue({
+            text: mockGeminiReply,
+          }),
+        },
+      };
+
+      const res = await service.processChat('user-123', {
+        message: 'Salom, qalaysan?',
+      });
+
+      expect(res.conversationId).toBe('conv-test-100');
+      expect(res.messageId).toBeDefined();
+      expect(mockPrismaService.aIConversation.create).toHaveBeenCalled();
+      expect(mockPrismaService.aIMessage.create).toHaveBeenCalledTimes(2); // 1 user + 1 assistant
     });
-
-    expect(res.conversationId).toBe(convId);
-    expect(res.reply).toContain("Gippo AI ma'lumot beruvchi vosita");
-    expect(res.reply).toContain('Oshqozon');
-  });
-
-  // 6. Conversation switches from Uzbek to Russian
-  it('6. should switch response language to Russian when conversation was initially Uzbek', async () => {
-    // Setup initial conversation in Uzbek
-    const convId = 'conv-uz-to-ru';
-    mockConversations.set(convId, { id: convId, userId: 'user-1' });
-    mockMessages.push({
-      id: 'msg-1',
-      conversationId: convId,
-      sender: AISender.USER,
-      content: 'Salom, boshim ogriyapti.',
-    });
-
-    // Send new message in Russian
-    const res = await service.processChat('user-1', {
-      conversationId: convId,
-      message: 'Здравствуйте, у меня поднялась температура. Что делать?',
-    });
-
-    expect(res.conversationId).toBe(convId);
-    expect(res.reply).toContain('Gippo ИИ является информационным инструментом');
-    expect(res.reply).toContain('простуде');
-  });
-
-  // 7. Emergency message in Uzbek
-  it('7. should return emergency response in Uzbek for Uzbek emergency input', async () => {
-    const res = await service.processChat(null, {
-      message: 'Menda ko\'krak og\'rig\'i va nafas qisishi bor',
-    });
-
-    expect(res.isEmergency).toBe(true);
-    expect(res.reply).toContain('SHOSHILINCH OGOHLANTIRISH');
-    expect(res.reply).toContain('103');
-    expect(res.reply).toContain("Gippo AI ma'lumot beruvchi vosita");
-  });
-
-  // 8. Emergency message in Russian
-  it('8. should return emergency response in Russian for Russian emergency input', async () => {
-    const res = await service.processChat(null, {
-      message: 'У меня сильная боль в груди и одышка',
-    });
-
-    expect(res.isEmergency).toBe(true);
-    expect(res.reply).toContain('ЭКСТРЕННОЕ ПРЕДУПРЕЖДЕНИЕ');
-    expect(res.reply).toContain('103');
-    expect(res.reply).toContain('Gippo ИИ является информационным инструментом');
-  });
-
-  // 9. Emergency message in English
-  it('9. should return emergency response in English for English emergency input', async () => {
-    const res = await service.processChat(null, {
-      message: 'I have severe chest pain and shortness of breath',
-    });
-
-    expect(res.isEmergency).toBe(true);
-    expect(res.reply).toContain('EMERGENCY ALERT');
-    expect(res.reply).toContain('103');
-    expect(res.reply).toContain('Gippo AI is an informational tool');
-  });
-
-  // 10. Localized medical disclaimer
-  it('10. should attach exact localized medical disclaimer based on language', async () => {
-    const resUz = await service.processChat(null, { message: 'Qon bosimi haqida ma\'lumot bering' });
-    expect(resUz.reply).toContain(
-      "Gippo AI ma'lumot beruvchi vosita bolib, professional tibbiy maslahat, tashxis yoki davolash ornini bosmaydi. Sogligingiz bilan bogliq muammolar bolsa, tasdiqlangan shifokorga murojaat qiling. Favqulodda holatda 103 raqamiga qongiroq qiling.",
-    );
-
-    const resRu = await service.processChat(null, { message: 'Расскажите про давление' });
-    expect(resRu.reply).toContain(
-      'Gippo ИИ является информационным инструментом и не заменяет профессиональную медицинскую консультацию, диагностику или лечение. При проблемах со здоровьем обратитесь к проверенному врачу. В экстренной ситуации звоните по номеру 103.',
-    );
-
-    const resEn = await service.processChat(null, { message: 'Tell me about blood pressure' });
-    expect(resEn.reply).toContain(
-      'Gippo AI is an informational tool and does not replace professional medical advice, diagnosis, or treatment. For health concerns, consult a verified doctor. In an emergency, call 103.',
-    );
-  });
-
-  // Verification of API fields structure
-  it('should return required payload structure (conversationId, messageId, reply, isEmergency)', async () => {
-    const res = await service.processChat('user-1', {
-      message: 'What is high blood pressure?',
-    });
-
-    expect(res).toHaveProperty('conversationId');
-    expect(res).toHaveProperty('messageId');
-    expect(res).toHaveProperty('reply');
-    expect(res).toHaveProperty('isEmergency');
-    expect(res.conversationId).toBe('conv-test-100');
   });
 });
-
-

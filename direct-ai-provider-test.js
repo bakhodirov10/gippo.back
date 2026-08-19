@@ -1,12 +1,12 @@
 const Groq = require('groq-sdk');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { GoogleGenAI } = require('@google/genai');
 require('dotenv').config();
 
 async function testDirectProvider() {
   console.log('==================================================');
   console.log('--- DIRECT AI PROVIDER TEST ---');
   
-  const provider = (process.env.AI_PROVIDER || 'GROQ').toUpperCase();
+  const provider = (process.env.AI_PROVIDER || 'GEMINI').toUpperCase();
   const modelName = process.env.AI_MODEL || (provider === 'GROQ' ? 'llama-3.3-70b-versatile' : 'gemini-3.6-flash');
   
   let apiKey = '';
@@ -21,6 +21,7 @@ async function testDirectProvider() {
   console.log('Provider:', provider);
   console.log('Model:', modelName);
   console.log('API Key Status:', keyPresent ? 'PRESENT' : 'MISSING');
+  console.log('SDK:', provider === 'GEMINI' ? '@google/genai' : 'groq-sdk');
   console.log('==================================================');
 
   if (!keyPresent) {
@@ -42,10 +43,12 @@ async function testDirectProvider() {
       console.log('GROQ DIRECT RESPONSE:', responseText);
       console.log('RESULT: SUCCESS');
     } else if (provider === 'GEMINI') {
-      const genAI = new GoogleGenerativeAI(apiKey);
-      const model = genAI.getGenerativeModel({ model: modelName });
-      const result = await model.generateContent('Hello, answer in one short sentence.');
-      const responseText = result.response.text();
+      const ai = new GoogleGenAI({ apiKey });
+      const result = await ai.models.generateContent({
+        model: modelName,
+        contents: 'Hello, answer in one short sentence.',
+      });
+      const responseText = result.text;
       console.log('GEMINI DIRECT RESPONSE:', responseText);
       console.log('RESULT: SUCCESS');
     } else {
@@ -58,4 +61,3 @@ async function testDirectProvider() {
 }
 
 testDirectProvider();
-
